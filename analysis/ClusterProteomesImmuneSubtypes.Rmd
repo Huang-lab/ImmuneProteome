@@ -1,0 +1,233 @@
+```{r}
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+#
+#             CLUSTER PROTEOMES' IMMUNE SUBTYPES
+#       
+#     Within cancer, define new (immune) subtypes and find key (immune) markers distinguishing them
+#     Cross cancer, identify markers that similarly distinguish the subtypes of different cancers
+#
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+
+rm(list = ls(all.names = TRUE))
+setwd('~/Box Sync/Huang_lab/manuscripts/ImmuneProteome/analysis/ClusterByMarkers')
+source('functions_cluster_proteomes.R')
+
+# Define annotations
+brca_clinical = read.delim(row.names=1,'../../../../Huang_lab_data/CPTAC2retrospective/BRCA/BRCA_clinical_summary.txt')
+brca_clinical = data.frame(t(brca_clinical))
+brca_ann_col = data.frame(brca_clinical[,1:4])
+rownames(brca_ann_col) = make.names(paste('BRCA.',rownames(brca_ann_col), sep = ''), unique = T)
+brca_ann_col$pam50 = sub('HER-2','Her2',brca_ann_col$pam50)
+brca_ann_col$Tumor.stage = gsub('(t[0-9]).*','\\1',brca_ann_col$Tumor.stage)
+
+crc_clinical = data.frame(read.delim(row.names=1,'../../data/CRC_clinical.txt'))
+crc_ann_col = data.frame(crc_clinical[,c(12,16,17,24)])
+rownames(crc_ann_col) = make.names(paste('CRC.',gsub('-','.',sub('TCGA-','',crc_clinical$TCGA.participant.ID)),'.01A',sep=''), unique = T)
+colnames(crc_ann_col) = c('Subtype', 'Tumor.stage', 'Hyper.mutated', 'Age.diag')
+crc_ann_col$Tumor.stage = sub('Stage IX.*','t9',crc_ann_col$Tumor.stage)
+crc_ann_col$Tumor.stage = sub('Stage IV.*','t4',crc_ann_col$Tumor.stage)
+crc_ann_col$Tumor.stage = sub('Stage III.*','t3',crc_ann_col$Tumor.stage)
+crc_ann_col$Tumor.stage = sub('Stage II.*','t2',crc_ann_col$Tumor.stage)
+crc_ann_col$Tumor.stage = sub('Stage I.*','t1',crc_ann_col$Tumor.stage)
+crc_ann_col$Hyper.mutated = sub('Non-Hyp','NonHyp',crc_ann_col$Hyper.mutated)
+
+ov_clinical = read.delim(row.names=1,'../../../../Huang_lab_data/CPTAC2retrospective/OV/OV_clinical.txt')
+ov_clinical = data.frame(t(ov_clinical))
+ov_ann_col = data.frame(ov_clinical[,c(17,35,54)])
+rownames(ov_ann_col) = make.names(paste('OV.',rownames(ov_ann_col), sep = ''), unique = T)
+colnames(ov_ann_col) = c('Tumor.grade', 'Clinical.stage', 'Tumor.tissue.site')
+ov_ann_col$Tumor.grade = sub('GX','t4',ov_ann_col$Tumor.grade)
+ov_ann_col$Tumor.grade = sub('G3','t3',ov_ann_col$Tumor.grade)
+ov_ann_col$Tumor.grade = sub('G2','t2',ov_ann_col$Tumor.grade)
+ov_ann_col$Tumor.grade = sub('G1','t1',ov_ann_col$Tumor.grade)
+ov_ann_col$Clinical.stage = sub('Stage IV.*','c4',ov_ann_col$Clinical.stage)
+ov_ann_col$Clinical.stage = sub('Stage III.*','c3',ov_ann_col$Clinical.stage)
+ov_ann_col$Clinical.stage = sub('Stage II.*','c2',ov_ann_col$Clinical.stage)
+ov_ann_col$Clinical.stage = sub('Stage I.*','c1',ov_ann_col$Clinical.stage)
+ov_ann_col$Tumor.tissue.site = sub('Peritoneum ovary','PeritoneumOvary',ov_ann_col$Tumor.tissue.site)
+
+# Color annotations 
+brca_ann_colors = list(
+  Tumor.stage = c(t1 = 'lightyellow', t2 = 'gold', t3 = 'orange', t4 = 'orangered'),
+  PR.status = c(negative = 'white', positive = 'darkgray'),
+  ER.status = c(negative = 'white', positive = 'darkgray'),
+  pam50 = c(Basal = '#CE2427', Her2 = '#EF5591', LumA = '#423996', LumB = '#8FBCE5')
+)
+crc_ann_colors = list(
+  Hyper.mutated = c(Hyp = 'darkgray', NonHyp = 'white'),
+  Tumor.stage = c(t1 = 'lightyellow', t2 = 'gold', t3 = 'orange', t4 = 'orangered'),
+  Subtype = c(Colon = '#e5e38f', Rectum = '#e5b88f')
+)
+ov_ann_colors = list(
+  Tumor.grade = c(t1 = 'lightyellow', t2 = 'gold', t3 = 'orange', t4 = 'orangered'),
+  Clinical.stage = c(c1 = 'lightyellow', c2 = 'gold', c3 = 'orange', c4 = 'orangered'),
+  Tumor.tissue.site = c(Omentum = '#c7d9b5', Ovary = '#adc793', PeritoneumOvary = '#94b672')
+)
+
+# Load transcriptomic data for Breast (BRCA), Colorectal (CRC) and Ovarian (OV) cancers
+brca_rna = read.table(row.names=1, header=TRUE, sep='\t', file='../../../../Huang_lab_data/CPTAC2retrospective/BRCA/BRCA_mRNA_formatted_normalized.txt'); brca_rna = brca_rna[, rownames(data.frame(sort(brca_clinical$pam50[rownames(brca_clinical) %in% colnames(brca_rna)])))]; colnames(brca_rna) = paste('BRCA.', colnames(brca_rna), sep = '')
+crc_rna = read.table(row.names=1, header=TRUE, sep='\t', file='../../../../Huang_lab_data/CPTAC2retrospective/CRC/CRC_mRNA_formatted_normalized.txt'); colnames(crc_rna) = paste('CRC.', colnames(crc_rna), sep = '')
+ov_rna = read.table(row.names=1, header=TRUE, sep='\t', file='../../../../Huang_lab_data/CPTAC2retrospective/OV/OV_mRNA_formatted_normalized.txt'); colnames(ov_rna) = paste('OV.', colnames(ov_rna), sep = '')
+
+# Load proteomics data for Breast (BRCA), Colorectal (CRC) and Ovarian (OV) cancers
+brca_pro = read.table(row.names=1, header=TRUE, sep='\t', file='../../../../Huang_lab_data/CPTAC2retrospective/BRCA/BRCA_PRO_formatted_normalized.txt'); brca_pro = brca_pro[, rownames(data.frame(sort(brca_clinical$pam50[rownames(brca_clinical) %in% colnames(brca_pro)])))]; brca_pro_IDs = colnames(brca_pro); colnames(brca_pro) = paste('BRCA.', colnames(brca_pro), sep = '')
+crc_pro = read.table(row.names=1, header=TRUE, sep='\t', file='../../data/CRC_PRO_formatted_renormalized.txt')
+ov_pro = read.table(row.names=1, header=TRUE, sep='\t', file='../../../../Huang_lab_data/CPTAC2retrospective/OV/OV_PNNL_PRO_formatted_normalized.txt'); ov_pro_IDs = colnames(ov_pro); colnames(ov_pro) = paste('OV.', colnames(ov_pro), sep = '') 
+
+# Load marker set: immune markers from https://www.immport.org/shared/genelists
+markers = data.frame(readxl::read_xls('../../data/Geneappend3.xls')) 
+
+# Reduce data to marker set
+brca_rna_immune = brca_rna[row.names(brca_rna) %in% markers$Symbol,]
+crc_rna_immune = crc_rna[row.names(crc_rna) %in% markers$Symbol,]
+ov_rna_immune = ov_rna[row.names(ov_rna) %in% markers$Symbol,]
+
+brca_pro_immune = brca_pro[row.names(brca_pro) %in% markers$Symbol,]
+crc_pro_immune = crc_pro[row.names(crc_pro) %in% markers$Symbol,]
+ov_pro_immune = ov_pro[row.names(ov_pro) %in% markers$Symbol,]
+
+# Filter out unexpressed markers from transcriptomes
+listOut[brca_rna_immune_filt, brca_rna_immune_dropped_markers] <- dropMarkers(brca_rna_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .75)
+listOut[crc_rna_immune_filt, crc_rna_immune_dropped_markers] <- dropMarkers(crc_rna_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .5)
+listOut[ov_rna_immune_filt, ov_rna_immune_dropped_markers] <- dropMarkers(ov_rna_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .5)
+
+# Filter out unexpressed markers from proteomes, also filter out those unexpressed in transcriptomes
+listOut[brca_pro_immune_filt, brca_pro_immune_dropped_markers] <- dropMarkers(brca_pro_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .75, force_drop = brca_rna_immune_dropped_markers)
+listOut[crc_pro_immune_filt, crc_pro_immune_dropped_markers] <- dropMarkers(crc_pro_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .5, force_drop = crc_rna_immune_dropped_markers)
+listOut[ov_pro_immune_filt, ov_pro_immune_dropped_markers] <- dropMarkers(ov_pro_immune, percent_NA = .2, low_mean_and_std = .05, q_low_var = .5, force_drop = ov_rna_immune_dropped_markers)
+
+
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+#
+#             ANALYZE PROTEOMES
+#
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+
+# Define the cluster structure based on Bayesian information content (BIC) of various fitted Gaussian mixture models
+listOut[brca_bic1, brca_bic2] <- plotBICs(brca_pro_immune_filt); summary(brca_bic1); summary(brca_bic2) # 4 subtypes may be defined by 4 marker groups
+listOut[crc_bic1, crc_bic2] <- plotBICs(crc_pro_immune_filt); summary(crc_bic1); summary(crc_bic2) # 3 subtypes may be defined by 3 marker groups
+listOut[ov_bic1, ov_bic2] <- plotBICs(ov_pro_immune_filt); summary(ov_bic1); summary(ov_bic2)  # 3 subtypes may be defined by 3 marker groups
+
+
+# Draw cluster heatmaps
+listOut[brca_pro_immune_filt_tree, brca_pro_immune_filt_cluster_row, brca_pro_immune_filt_cluster_col] = 
+  clusterData(
+    data = brca_pro_immune_filt
+    , main = 'Immune proteome in BRCA cancer by selected BRCA-RNA-PRO-expressed Immport markers'
+    , annotation_col = brca_ann_col, annotation_colors = brca_ann_colors
+    , num_clusters_col = 4
+    , num_clusters_row = 4
+    , cluster_cols = T
+    , cluster_rows = T
+    , annotate_new_clusters_col = T
+  )
+table(brca_pro_immune_filt_cluster_row); table(brca_pro_immune_filt_cluster_col)
+ploth = round(.2*dim(brca_pro_immune_filt)[1]); plotw = round(.2*dim(brca_pro_immune_filt)[2])
+pdf('out/brca_PRO_immune_clustering_brcaRnaProHighExpressed_Immport_markers_brcaImmuneSubtypes.pdf', w=plotw, h = ploth); brca_pro_immune_filt_tree; dev.off()
+
+listOut[crc_pro_immune_filt_tree, crc_pro_immune_filt_cluster_row, crc_pro_immune_filt_cluster_col] = 
+  clusterData(
+    data = crc_pro_immune_filt
+    , main = 'Immune proteome in CRC cancer by selected CRC-RNA-PRO-expressed Immport markers'
+    , annotation_col = crc_ann_col, annotation_colors = crc_ann_colors
+    , num_clusters_col = 3
+    , num_clusters_row = 3
+    , cluster_cols = T
+    , cluster_rows = T
+    , annotate_new_clusters_col = T
+  )
+table(crc_pro_immune_filt_cluster_row); table(crc_pro_immune_filt_cluster_col)
+ploth = round(.2*dim(crc_pro_immune_filt)[1]); plotw = round(.2*dim(crc_pro_immune_filt)[2])
+pdf('out/crc_PRO_immune_clustering_crcRnaProHighExpressed_Immport_markers_crcImmuneSubtypes.pdf', w=plotw, h = ploth); crc_pro_immune_filt_tree; dev.off()
+
+listOut[ov_pro_immune_filt_tree, ov_pro_immune_filt_cluster_row, ov_pro_immune_filt_cluster_col] = 
+  clusterData(
+    data = ov_pro_immune_filt
+    , main = 'Immune proteome in OV cancer by selected OV-RNA-PRO-expressed Immport markers'
+    , annotation_col = ov_ann_col, annotation_colors = ov_ann_colors
+    , num_clusters_col = 3
+    , num_clusters_row = 3
+    , cluster_cols = T
+    , cluster_rows = T
+    , annotate_new_clusters_col = T
+  )
+table(ov_pro_immune_filt_cluster_row); table(ov_pro_immune_filt_cluster_col)
+ploth = round(.2*dim(ov_pro_immune_filt)[1]); plotw = round(.2*dim(ov_pro_immune_filt)[2])
+pdf('out/ov_PRO_immune_clustering_ovRnaProHighExpressed_Immport_markers_ovImmuneSubtypes.pdf', w=plotw, h = ploth); ov_pro_immune_filt_tree; dev.off()
+
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+#
+#             Analyze proteins' differential expression patterns (log-fold-changes) 
+#                       within newly discovered immune subtypes 
+#
+# _|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|_|
+
+brca_pro_immune_filt_diff_exp_New = diffExpSubtypes(brca_pro_immune_filt, data.frame(brca_pro_immune_filt_cluster_col), subtypes = 'brca_pro_immune_filt_cluster_col')
+compareFCs(brca_pro_immune_filt_diff_exp_New, thr_FC = 3)
+brca_write_out = writeFCTable(brca_pro_immune_filt_diff_exp_New, main = 'out/brca_pro_immune_filt_markers_diff_exp_logFC_Putative_Subtypes.txt')
+
+crc_pro_immune_filt_diff_exp_New = diffExpSubtypes(crc_pro_immune_filt, data.frame(crc_pro_immune_filt_cluster_col), subtypes = 'crc_pro_immune_filt_cluster_col')
+compareFCs(crc_pro_immune_filt_diff_exp_New, thr_FC = 2)
+crc_write_out = writeFCTable(crc_pro_immune_filt_diff_exp_New, main = 'out/crc_pro_immune_filt_markers_diff_exp_logFC_Putative_Subtypes.txt')
+
+ov_pro_immune_filt_diff_exp_New = diffExpSubtypes(ov_pro_immune_filt, data.frame(ov_pro_immune_filt_cluster_col), subtypes = 'ov_pro_immune_filt_cluster_col')
+compareFCs(ov_pro_immune_filt_diff_exp_New, thr_FC = 3)
+ov_write_out = writeFCTable(ov_pro_immune_filt_diff_exp_New, main = 'out/ov_pro_immune_filt_markers_diff_exp_logFC_Putative_Subtypes.txt')
+
+# Check correspondance with old subtype definitions
+brca_pro_immune_filt_diff_exp_Old = diffExpSubtypes(brca_pro_immune_filt, brca_ann_col, subtypes = 'pam50')
+crc_pro_immune_filt_diff_exp_Old = diffExpSubtypes(crc_pro_immune_filt, crc_ann_col, subtypes = 'Subtype')
+ov_pro_immune_filt_diff_exp_Old = diffExpSubtypes(ov_pro_immune_filt, ov_ann_col, subtypes = 'Tumor.tissue.site') # definition-unclear
+
+# Rank-order proteins distinguishing more subtypes within a cancer by their log-fold-change variance
+res = sort(apply(brca_pro_immune_filt_diff_exp_New, 1, 'var', na.rm = T), decreasing = T, index.return = T)
+markers_distin_brca_subtypes = rownames(brca_pro_immune_filt_diff_exp_New)[res$ix[res$x > summary(res$x)[5]]]
+res = sort(apply(crc_pro_immune_filt_diff_exp_New, 1, 'var', na.rm = T), decreasing = T, index.return = T)
+markers_distin_crc_subtypes = rownames(crc_pro_immune_filt_diff_exp_New)[res$ix[res$x > summary(res$x)[5]]]
+res = sort(apply(ov_pro_immune_filt_diff_exp_New, 1, 'var', na.rm = T), decreasing = T, index.return = T)
+markers_distin_ov_subtypes = rownames(ov_pro_immune_filt_diff_exp_New)[res$ix[res$x > summary(res$x)[5]]]
+
+# Choose key markers 
+key_markers = unique(c(markers_distin_brca_subtypes, markers_distin_crc_subtypes, markers_distin_ov_subtypes))
+
+# Compare proteins' differential expression (enrichment) patterns cross-cancer 
+compareFCs(brca_pro_immune_filt_diff_exp_New, crc_pro_immune_filt_diff_exp_New, sim_FC = .2, thr_FC = 1)
+compareFCs(brca_pro_immune_filt_diff_exp_New, ov_pro_immune_filt_diff_exp_New, sim_FC = .2, thr_FC = 1)
+compareFCs(crc_pro_immune_filt_diff_exp_New, ov_pro_immune_filt_diff_exp_New, sim_FC = .2, thr_FC = 1)
+
+# Tabulate enrichment patterns cross-cancer
+key_marker_enrich = cbind(brca_pro_immune_filt_diff_exp_New[key_markers,], crc_pro_immune_filt_diff_exp_New[key_markers,], ov_pro_immune_filt_diff_exp_New[key_markers,])
+key_marker_enrich[is.na(key_marker_enrich)] = 0
+rownames(key_marker_enrich) = key_markers
+colnames(key_marker_enrich) = c(paste('BRCA.putative.subtype.',colnames(brca_pro_immune_filt_diff_exp_New),sep = ''),
+                                paste('CRC.putative.subtype.',colnames(crc_pro_immune_filt_diff_exp_New),sep = ''),
+                                paste('OV.putative.subtype.',colnames(ov_pro_immune_filt_diff_exp_New),sep = ''))
+
+# Draw enrichment heatmap
+key_marker_enrich_ann_col = data.frame(c(rep('BRCA',dim(brca_pro_immune_filt_diff_exp_New)[2]),
+                                         rep('CRC',dim(crc_pro_immune_filt_diff_exp_New)[2]),
+                                         rep('OV',dim(ov_pro_immune_filt_diff_exp_New)[2])))
+rownames(key_marker_enrich_ann_col) = colnames(key_marker_enrich)
+colnames(key_marker_enrich_ann_col) = 'Cancer'
+key_marker_enrich_ann_colors = list(Cancer = c(BRCA = 'forestgreen', CRC = 'yellow', OV = 'white'))
+key_marker_enrich_main = 'Key immune protein enrichments in putative cancer subtypes'
+paletteLength <- 100
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+myBreaks <- c(seq(min(key_marker_enrich), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(key_marker_enrich)/paletteLength, max(key_marker_enrich), length.out=floor(paletteLength/2)))
+key_marker_enrich_tree = pheatmap::pheatmap(key_marker_enrich
+                                            , cluster_rows = T 
+                                            , cluster_cols = F
+                                            , main = key_marker_enrich_main
+                                            , annotation_col = key_marker_enrich_ann_col
+                                            # , annotation_colors = key_marker_enrich_ann_colors
+                                            , color = myColor
+                                            , breaks = myBreaks
+                                            , fontsize = 7
+                                            , display_numbers = T
+                                            , width = 6
+                                            , height = 4
+)
+pdf(paste('out/',key_marker_enrich_main,'.pdf', sep = ''), w=5, h = 8); key_marker_enrich_tree; dev.off()
+
+```
